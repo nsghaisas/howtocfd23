@@ -24,7 +24,7 @@ int main()
 
   #pragma omp parallel
   {
-    #pragma omp for schedule (dynamic, 4)
+    #pragma omp for schedule (static, 7)
     for(i=0; i<N; i++)
     {
       int tid = omp_get_thread_num();

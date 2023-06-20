@@ -11,8 +11,8 @@
 int main()
 {
   int p, i;
-  p = 4;
-  //omp_set_num_threads(p);
+  p = 20;
+  omp_set_num_threads(p);
 
   #pragma omp parallel
   {
