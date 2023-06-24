@@ -1,0 +1,185 @@
+module mod_diffusion
+  implicit none
+  save 
+
+  real*8,allocatable,dimension(:,:)::T,Trhs
+  real*8,device,allocatable,dimension(:,:)::dev_T,dev_Trhs
+  integer,parameter::n1=2048
+  integer,parameter::n2=2048
+  real*8,parameter::pi=3.1415926535897931d0
+  real*8,parameter::lx=2.d0*pi
+  real*8,parameter::ly=2.d0*pi
+  real*8,parameter::dx=lx/dble(n1)
+  real*8,parameter::dy=lx/dble(n2)
+  real*8,parameter::dt=1.e-4
+  real*8,parameter::Diff=1.e-2
+
+end module mod_diffusion
+
+subroutine allocate_arrays
+   use mod_diffusion
+!!   use cudafor
+   implicit none
+
+   allocate(T(0:n1+1,0:n2+1),Trhs(0:n1+1,0:n2+1))
+   allocate(dev_T(0:n1+1,0:n2+1),dev_Trhs(0:n1+1,0:n2+1))
+
+end subroutine allocate_arrays
+
+
+subroutine copy_host_to_device
+   use cudafor
+   use mod_diffusion
+   implicit none
+   dev_T=T;dev_Trhs=Trhs;
+
+end subroutine copy_host_to_device
+
+
+attributes(global) subroutine pbc_kernel(T,n1,n2)
+!!  use cudafor
+  implicit none
+  integer,value::n1,n2
+  integer,value::i,j
+  real*8,device::T(0:n1+1,0:n2+1)
+
+  i = (blockIdx%x-1)*blockDim%x + threadIdx%x 
+  j = (blockIdx%y-1)*blockDim%y + threadIdx%y 
+
+  !! Left and Right
+  !! Different from serial, we don't set four corners here
+  if(i==1)then
+  T(i-1,j)   =T(n1,j);
+  T(n1+1,j)  =T(i,j);
+  endif
+
+
+  !! Top and bottom
+  if(j==1)then
+  T(i,j-1)   =T(i,n2);
+  T(i,n2+1)=T(i,j);
+  endif
+end subroutine pbc_kernel
+
+attributes(global) subroutine eval_rhs_kernel(T,Trhs,n1,n2,Diff,dx,dy)
+  implicit none
+  integer::i,j
+  integer,value::n1,n2
+  real*8,value::Diff,dx,dy
+  real*8,device,dimension(0:n1+1,0:n2+1)::Trhs,T
+
+  i = (blockIdx%x-1)*blockDim%x + threadIdx%x 
+  j = (blockIdx%y-1)*blockDim%y + threadIdx%y
+
+  Trhs(i,j) = Diff*( (T(i+1,j) -2.d0*T(i,j) + T(i-1,j))/(dx*dx)  +&
+              ( T(i,j+1) -2.d0*T(i,j) + T(i,j-1))/(dy*dy)); 
+
+end subroutine eval_rhs_kernel
+
+
+attributes(global) subroutine update_temp(T,Trhs,n1,n2,dt)
+  implicit none
+  integer::i1,i2
+  integer,value::n1,n2
+  real*8,value::dt
+  real*8,device,dimension(0:n1+1,0:n2+1)::Trhs,T
+
+  i1 = (blockIdx%x-1)*blockDim%x + threadIdx%x
+  i2 = (blockIdx%y-1)*blockDim%y + threadIdx%y
+
+!!  T(i2,i1) = T(i2,i1) + dt*Trhs(i2,i1)
+  T(i1,i2) = T(i1,i2) + dt*Trhs(i1,i2)
+
+end subroutine update_temp 
+
+
+
+
+
+
+
+
+program main
+use nvtx
+use mod_diffusion
+use cudafor
+implicit none
+
+integer::i,j,itime,Ttime
+real*8::tini,tfin
+character(100)::fname,ftime
+
+!! Set the CUDA grid
+  type(dim3) ::dimGrid,dimBlock
+
+!!Ttime=50000;
+Ttime=100000;
+
+call allocate_arrays
+
+!! Initialize
+T=0;Trhs=0;
+
+!! Initialize the field
+open(unit=10,file="init_config.dat",status="unknown")
+do j = 1, n2
+   do i = 1, n1
+      T(i,j) = sin(2.0*pi*i*dx/Lx)*sin(2.0*pi*j*dy/Ly)
+      write(10,*) i,j, T(i,j)
+   enddo
+   write(10,*) 
+enddo
+close(10)
+
+!!call cpu_time(tini)
+
+
+call copy_host_to_device
+
+
+!!-- Set the cuda grid
+  dimGrid = dim3(n1/32,n2/32,1)
+  dimBlock = dim3(32,32,1)
+
+
+call cpu_time(tini)
+
+do itime=1,Ttime
+
+   call nvtxStartRange("SET PBC")
+   call pbc_kernel<<<dimGrid,dimBlock>>>(dev_T,n1,n2)
+   call nvtxEndRange
+
+
+   call nvtxStartRange("Derivative")
+   !! Evaluate RHS
+   call eval_rhs_kernel<<<dimGrid,dimBlock>>>(dev_T,dev_Trhs,n1,n2,Diff,dx,dy)
+   call nvtxEndRange
+
+   
+   !! Update using Euler scheme
+   call nvtxStartRange("Update")
+   call update_temp<<<dimGrid,dimBlock>>>(dev_T,dev_Trhs,n1,n2,dt)
+   call nvtxEndRange
+enddo
+
+T=dev_T;Trhs=dev_Trhs;
+
+call cpu_time(tfin);
+write(*,*) itime
+
+write(ftime,'(i8)') itime
+open(unit=10,file="diff_"//trim(adjustl(ftime))//".dat",status="unknown")
+do j = 1, n2
+   do i = 1, n1
+      write(10,*) i,j, T(i,j),Trhs(i,j)
+   enddo
+   write(10,*) 
+enddo
+close(10)
+
+
+write(*,*) "Time elaspsed in seconds:",tfin-tini
+
+
+END program main
