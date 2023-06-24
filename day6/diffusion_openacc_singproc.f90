@@ -1,5 +1,5 @@
 program main
-use nvtx
+!!use nvtx
 use openacc
 !!use derivative_mod_gpu
 
@@ -53,7 +53,7 @@ close(10)
 call cpu_time(tini)
 do itime=1,Ttime
 
-   call nvtxStartRange("SET PBC")
+!!   call nvtxStartRange("SET PBC")
 
    !$acc parallel loop private(i) present(T) async(istr)
    do i=1,n1
@@ -69,10 +69,10 @@ do itime=1,Ttime
    enddo
    !$acc end parallel
 
-   call nvtxEndRange
+!!!   call nvtxEndRange
 
 
-   call nvtxStartRange("Derivative")
+!!!   call nvtxStartRange("Derivative")
    !! Evaluate RHS
    !$acc parallel loop collapse(2) private(i,j) present(T,Trhs,dx,dy,Diff) async(istr) 
    DO j = 1,n2
@@ -82,11 +82,11 @@ do itime=1,Ttime
       ENDDO
    ENDDO
    !$acc end parallel   
-   call nvtxEndRange
+!!!   call nvtxEndRange
 
    
    !! Update using Euler scheme
-   call nvtxStartRange("Update")
+!!!!   call nvtxStartRange("Update")
 !!   !$acc parallel loop present(T,Trhs,dt) tile(128,8) 
    !$acc parallel loop gang collapse(2)  present(T,Trhs,dt) async(istr)
 !!   !$acc kernels present(T,Trhs,dt)
@@ -97,7 +97,7 @@ do itime=1,Ttime
     enddo
 !!   !$acc end kernels
    !$acc end parallel 
-   call nvtxEndRange
+!!!!   call nvtxEndRange
 enddo
 !$acc end data
 !$acc wait(istr)
